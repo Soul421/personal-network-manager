@@ -364,8 +364,9 @@ def command_upsert(args: argparse.Namespace) -> int:
     person = read_json(existing_path) if existing_path else {}
     for field in ("aliases", "organizations", "offers", "needs", "traits", "evidence", "risks"):
         person[field] = merge_unique(person.get(field, []), incoming.get(field, []))
-    for field in ("id", "name", "tier", "relationship_status"):
-        person[field] = incoming.get(field, person.get(field))
+    for field in ("id", "name", "tier", "relationship_status", "company", "title", "phone", "wechat", "city", "notes"):
+        if field in incoming:
+            person[field] = incoming[field]
     # 背调状态单独处理
     person["背景调查状态"] = incoming.get("背景调查状态", person.get("背景调查状态", "待核实"))
     person["needs_confirmation"] = bool(incoming.get("needs_confirmation", False))
@@ -514,7 +515,7 @@ def find_three_way_matches(people: list[dict], threshold: float) -> list[dict]:
 
 
 def command_update_check(args: argparse.Namespace) -> int:
-    """更新背调结果"""
+    """更新背调结果（手动指定状态）"""
     root = data_dir()
     person_id = args.person_id
     check_result = args.result  # "待核实" / "无风险" / "有疑点" / "有风险"
@@ -540,6 +541,68 @@ def command_update_check(args: argparse.Namespace) -> int:
     if risks:
         print(f"  风险项: {len(risks)} 个")
     return 0
+
+
+def command_check(args: argparse.Namespace) -> int:
+    """生成搜索查询或根据搜索结果自动判断背调状态"""
+    root = data_dir()
+    paths = person_files(root)
+    target_path = next(
+        (path for path in paths if read_json(path).get("id") == args.person_id),
+        None,
+    )
+    if not target_path:
+        print(f"未找到人物: {args.person_id}", file=sys.stderr)
+        return 1
+    
+    person = read_json(target_path)
+    
+    if args.results:
+        # 模式2：根据搜索结果自动判断
+        company_results = json.loads(Path(args.results).read_text(encoding="utf-8")) if args.results.endswith(".json") else []
+        person_results = json.loads(Path(args.person_results).read_text(encoding="utf-8")) if args.person_results and args.person_results.endswith(".json") else []
+        
+        # 调用分析模块
+        sys.path.insert(0, str(Path(__file__).parent))
+        from background_check import analyze_company_info, analyze_person_info, determine_status, generate_report
+        
+        company_result = analyze_company_info(person.get("company", ""), company_results)
+        person_result = analyze_person_info(person.get("name", ""), person.get("company", ""), person_results)
+        status = determine_status(company_result, person_result)
+        all_risks = company_result.get("risks", []) + person_result.get("risks", [])
+        
+        # 更新人物档案
+        person["背景调查状态"] = status
+        person["risks"] = [r.get("message", str(r)) for r in all_risks]
+        person["updated_at"] = now_iso()
+        write_json(target_path, person)
+        
+        # 保存报告
+        report = generate_report(person, company_result, person_result, status)
+        report_path = root / "background-checks" / f"{person['id']}.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report, encoding="utf-8")
+        
+        print(f"✅ {person['name']} 背调完成")
+        print(f"   状态: {status}")
+        print(f"   风险项: {len(all_risks)} 个")
+        print(f"   报告: {report_path}")
+        return 0
+    else:
+        # 模式1：生成搜索查询
+        queries = {
+            "person_id": person["id"],
+            "person_name": person["name"],
+            "company": person.get("company", ""),
+            "title": person.get("title", ""),
+            "search_queries": {
+                "company": f"{person.get('company', '')} 工商信息 注册资本 股东",
+                "person": f"{person.get('name', '')} {person.get('company', '')} 采访 报道",
+                "risks": f"{person.get('company', '')} 风险 诉讼 纠纷 失信",
+            }
+        }
+        print(json.dumps(queries, ensure_ascii=False, indent=2))
+        return 0
 
 
 def command_match(_: argparse.Namespace) -> int:
@@ -600,11 +663,17 @@ def parser() -> argparse.ArgumentParser:
     upsert.set_defaults(func=command_upsert)
     sub.add_parser("validate", help="验证私有人物档案").set_defaults(func=command_validate)
     
-    update_check = sub.add_parser("update-check", help="更新背调结果")
+    update_check = sub.add_parser("update-check", help="手动更新背调结果")
     update_check.add_argument("person_id", help="人物ID")
     update_check.add_argument("result", choices=["待核实", "无风险", "有疑点", "有风险"], help="背调结果")
     update_check.add_argument("--risks", help="风险列表 JSON")
     update_check.set_defaults(func=command_update_check)
+    
+    check = sub.add_parser("check", help="生成搜索查询或根据结果自动判断背调状态")
+    check.add_argument("person_id", help="人物ID")
+    check.add_argument("--results", help="公司搜索结果 JSON 文件路径")
+    check.add_argument("--person-results", help="个人搜索结果 JSON 文件路径")
+    check.set_defaults(func=command_check)
     
     sub.add_parser("match", help="计算双向价值匹配").set_defaults(func=command_match)
     return result
