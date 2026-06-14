@@ -1,0 +1,23 @@
+{
+  "id": "person-chen-yu",
+  "name": "陈雨（虚构人物）",
+  "aliases": ["示例人物乙"],
+  "tier": "candidate",
+  "relationship_status": "not_connected",
+  "organizations": [
+    {"name": "示例适老产品公司（虚构）", "role": "产品负责人"}
+  ],
+  "offers": ["适老化产品供应方"],
+  "needs": ["社区健康服务渠道"],
+  "traits": ["重视产品落地"],
+  "evidence": [
+    {
+      "source_type": "user_provided",
+      "source": "fictional-example",
+      "summary": "本人物、企业及合作需求均为虚构示例，不对应任何真实主体。",
+      "confidence": 0.8
+    }
+  ],
+  "risks": [],
+  "updated_at": "2026-06-14T00:00:00Z"
+}

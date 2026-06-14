@@ -1,0 +1,10 @@
+{
+  "instance_name": "My private network",
+  "default_tier": "candidate",
+  "matching_threshold": 0.45,
+  "feishu": {
+    "people_table_name": "人物库",
+    "opportunities_table_name": "合作机会"
+  }
+}
+

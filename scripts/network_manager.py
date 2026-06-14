@@ -1,0 +1,486 @@
+#!/usr/bin/env python3
+"""Local private-data operations for Personal Network Manager."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+import unicodedata
+import zipfile
+from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+from xml.etree import ElementTree
+
+
+SUPPORTED_SUFFIXES = {".md", ".txt", ".docx"}
+EXCLUDED_PARTS = {
+    ".git",
+    ".codex-video-env",
+    "node_modules",
+    "personal-network-manager",
+    "cc-switch",
+    "__pycache__",
+    "output",
+    "frames",
+}
+SURNAMES = (
+    "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
+    "戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐"
+    "费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平"
+    "黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝"
+    "董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊"
+    "胡凌霍虞万支柯管卢莫经房裘缪干解应宗丁宣邓郁单杭洪包诸左石崔吉"
+    "钮龚程嵇邢滑裴陆荣翁荀羊甄曲家封芮羿储靳汲邴糜松井段富巫乌焦巴"
+    "弓牧隗山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘厉戎祖武符刘景詹束"
+    "龙叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴郁胥能"
+    "苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍却璩桑桂濮牛寿通边扈燕冀郏"
+    "浦尚农温别庄晏柴瞿阎充慕连茹习艾鱼容向古易慎戈廖庾终暨居衡步都"
+    "耿满弘匡国文寇广禄阙东欧沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那"
+    "简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公"
+)
+HONORIFICS = "董事长|创始人|总经理|老师|教授|博士|主任|院长|经理|总"
+STRONG_HONORIFICS = "董事长|创始人|总经理|老师|教授|博士|主任|院长"
+FULL_NAME_WITH_TITLE = re.compile(
+    rf"(?<![\u4e00-\u9fff])([{SURNAMES}][\u4e00-\u9fff]{{1,2}})(?:[{SURNAMES}])?(?:{STRONG_HONORIFICS})"
+)
+TITLE_ONLY = re.compile(rf"(?<![\u4e00-\u9fff])([{SURNAMES}])(?:{HONORIFICS})")
+STRUCTURED_PERSON = re.compile(
+    rf"(?<![\u4e00-\u9fff])([{SURNAMES}][\u4e00-\u9fff]{{1,2}})[（(][^）)]{{0,40}}(?:{HONORIFICS})"
+)
+FILENAME_PERSON = re.compile(
+    rf"^([{SURNAMES}][\u4e00-\u9fff]{{1,2}})(?:[{SURNAMES}]总|总)?"
+    r"(?:人物访谈|采访|访谈|公众号文章)"
+)
+GENERIC_NAMES = {
+    "人物访谈",
+    "合作伙伴",
+    "工作人员",
+    "有限公司",
+    "董事长",
+    "创始人",
+    "总经理",
+    "负责人",
+    "师父",
+    "成片",
+}
+GENERIC_PREFIXES = ("从", "成为", "那", "这个", "我们", "你们", "他们", "她们", "一位", "这位")
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def data_dir() -> Path:
+    raw = os.environ.get("PNM_DATA_DIR")
+    if not raw:
+        raise SystemExit("请先设置 PNM_DATA_DIR，且必须指向公开仓库之外的私有目录。")
+    result = Path(raw).expanduser().resolve()
+    repo = Path(__file__).resolve().parents[1]
+    if result == repo or repo in result.parents:
+        raise SystemExit("PNM_DATA_DIR 不能位于公开 Skill 仓库内。")
+    return result
+
+
+def write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def read_json(path: Path) -> object:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def command_init(_: argparse.Namespace) -> int:
+    root = data_dir()
+    for relative in (
+        "people/formal",
+        "people/candidates",
+        "evidence",
+        "opportunities",
+        "scan-results",
+        "sync",
+    ):
+        (root / relative).mkdir(parents=True, exist_ok=True)
+    config = root / "config.json"
+    if not config.exists():
+        write_json(
+            config,
+            {
+                "instance_name": "Private personal network",
+                "default_tier": "candidate",
+                "matching_threshold": 0.45,
+                "created_at": now_iso(),
+            },
+        )
+    print(f"私有实例已准备：{root}")
+    return 0
+
+
+def docx_text(path: Path) -> str:
+    with zipfile.ZipFile(path) as archive:
+        xml = archive.read("word/document.xml")
+    root = ElementTree.fromstring(xml)
+    return "\n".join(node.text or "" for node in root.iter() if node.tag.endswith("}t"))
+
+
+def file_text(path: Path) -> str:
+    if path.suffix.lower() == ".docx":
+        return docx_text(path)
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def candidate_files(source: Path, limit: int | None) -> list[Path]:
+    files = []
+    for path in source.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            continue
+        if any(part in EXCLUDED_PARTS or part.startswith(".") for part in path.parts):
+            continue
+        files.append(path)
+    files.sort()
+    return files[:limit] if limit else files
+
+
+def clean_name(name: str) -> str | None:
+    name = unicodedata.normalize("NFKC", name).strip()
+    if (
+        name in GENERIC_NAMES
+        or name.startswith(GENERIC_PREFIXES)
+        or len(name) < 2
+        or len(name) > 4
+        or name.endswith(("公司", "集团", "品牌", "医院", "研究院", "项目", "通道", "引用", "人帮"))
+    ):
+        return None
+    return name
+
+
+def context(text: str, start: int, end: int, radius: int = 75) -> str:
+    return re.sub(r"\s+", " ", text[max(0, start - radius) : min(len(text), end + radius)]).strip()
+
+
+def extract_candidates(path: Path, text: str) -> list[dict]:
+    found: list[dict] = []
+    for pattern, confidence, reason in (
+        (FULL_NAME_WITH_TITLE, 0.9, "正文中出现完整姓名与职务称呼"),
+        (TITLE_ONLY, 0.48, "正文中仅出现姓氏与职务称呼，需确认完整身份"),
+        (STRUCTURED_PERSON, 0.86, "结构化嘉宾信息中出现姓名与职务"),
+    ):
+        for match in pattern.finditer(text):
+            raw = match.group(1)
+            name = clean_name(raw if pattern is not TITLE_ONLY else raw + "总")
+            if name:
+                found.append(
+                    {
+                        "name": name,
+                        "confidence": confidence,
+                        "reason": reason,
+                        "snippet": context(text, match.start(), match.end()),
+                    }
+                )
+    for match in FILENAME_PERSON.finditer(path.stem):
+        name = clean_name(match.group(1))
+        if name:
+            found.append(
+                {
+                    "name": name,
+                    "confidence": 0.7,
+                    "reason": "文件名显示为人物访谈材料",
+                    "snippet": path.name,
+                }
+            )
+    return found
+
+
+def command_scan(args: argparse.Namespace) -> int:
+    root = data_dir()
+    source = Path(args.source).expanduser().resolve()
+    if not source.exists():
+        raise SystemExit(f"扫描路径不存在：{source}")
+
+    grouped: dict[str, dict] = {}
+    errors = []
+    files = candidate_files(source, args.limit)
+    for path in files:
+        try:
+            text = file_text(path)
+        except Exception as exc:  # Keep the batch reviewable when one source is malformed.
+            errors.append({"source": str(path), "error": str(exc)})
+            continue
+        for item in extract_candidates(path, text):
+            record = grouped.setdefault(
+                item["name"],
+                {
+                    "name": item["name"],
+                    "suggested_tier": "candidate",
+                    "relationship_status": "unknown",
+                    "needs_confirmation": True,
+                    "max_confidence": 0.0,
+                    "mentions": [],
+                },
+            )
+            record["max_confidence"] = max(record["max_confidence"], item["confidence"])
+            if len(record["mentions"]) < 12:
+                record["mentions"].append(
+                    {
+                        "source_type": "user_provided",
+                        "source": str(path),
+                        "reason": item["reason"],
+                        "snippet": item["snippet"],
+                        "confidence": item["confidence"],
+                    }
+                )
+
+    payload = {
+        "scan_id": datetime.now().strftime("%Y%m%d-%H%M%S-%f"),
+        "source_root": str(source),
+        "created_at": now_iso(),
+        "files_scanned": len(files),
+        "candidate_count": len(grouped),
+        "notice": "扫描结果仅供审阅，不代表人物身份或关系已确认。",
+        "candidates": sorted(grouped.values(), key=lambda item: (-item["max_confidence"], item["name"])),
+        "errors": errors,
+    }
+    output = root / "scan-results" / f'{payload["scan_id"]}.json'
+    write_json(output, payload)
+    print(f"已扫描 {len(files)} 个文件，识别 {len(grouped)} 个待审阅人物：{output}")
+    return 0
+
+
+def person_id(name: str) -> str:
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
+    return f"person-{digest}"
+
+
+def command_import_scan(args: argparse.Namespace) -> int:
+    root = data_dir()
+    scans = sorted((root / "scan-results").glob("*.json"))
+    if not scans:
+        raise SystemExit("没有可导入的扫描结果。")
+    scan_path = Path(args.scan).expanduser().resolve() if args.scan else scans[-1]
+    payload = read_json(scan_path)
+    created = 0
+    updated = 0
+    for candidate in payload.get("candidates", []):
+        if len(candidate["name"]) == 2 and candidate["name"].endswith("总"):
+            source_set = {item.get("source") for item in candidate.get("mentions", [])}
+            merge_targets = []
+            for existing_path in (root / "people" / "candidates").glob("*.json"):
+                existing = read_json(existing_path)
+                existing_sources = {item.get("source") for item in existing.get("evidence", [])}
+                if (
+                    len(existing.get("name", "")) >= 2
+                    and existing["name"].startswith(candidate["name"][0])
+                    and source_set & existing_sources
+                ):
+                    merge_targets.append((existing_path, existing))
+            if len(merge_targets) == 1:
+                path, person = merge_targets[0]
+                if candidate["name"] not in person.setdefault("aliases", []):
+                    person["aliases"].append(candidate["name"])
+                person.setdefault("evidence", []).extend(candidate.get("mentions", []))
+                person["updated_at"] = now_iso()
+                write_json(path, person)
+                updated += 1
+                continue
+        identifier = person_id(candidate["name"])
+        path = root / "people" / "candidates" / f"{identifier}.json"
+        if path.exists():
+            person = read_json(path)
+            known_sources = {(item.get("source"), item.get("snippet")) for item in person.get("evidence", [])}
+            for mention in candidate.get("mentions", []):
+                key = (mention.get("source"), mention.get("snippet"))
+                if key not in known_sources:
+                    person.setdefault("evidence", []).append(mention)
+            person["updated_at"] = now_iso()
+            updated += 1
+        else:
+            person = {
+                "id": identifier,
+                "name": candidate["name"],
+                "aliases": [],
+                "tier": "candidate",
+                "relationship_status": "unknown",
+                "organizations": [],
+                "offers": [],
+                "needs": [],
+                "traits": [],
+                "evidence": candidate.get("mentions", []),
+                "risks": ["扫描提取结果尚未人工确认"],
+                "needs_confirmation": True,
+                "updated_at": now_iso(),
+            }
+            created += 1
+        write_json(path, person)
+    print(f"已导入候选库：新建 {created}，更新 {updated}。所有记录仍需人工确认。")
+    return 0
+
+
+def merge_unique(existing: list, incoming: list) -> list:
+    result = list(existing)
+    for item in incoming:
+        if item not in result:
+            result.append(item)
+    return result
+
+
+def command_upsert(args: argparse.Namespace) -> int:
+    root = data_dir()
+    incoming = read_json(Path(args.file).expanduser().resolve())
+    if not isinstance(incoming, dict) or not incoming.get("name"):
+        raise SystemExit("输入必须是包含 name 的人物 JSON 对象。")
+    incoming.setdefault("id", person_id(incoming["name"]))
+    incoming.setdefault("tier", "candidate")
+    incoming.setdefault("relationship_status", "unknown")
+    for field in ("aliases", "organizations", "offers", "needs", "traits", "evidence", "risks"):
+        incoming.setdefault(field, [])
+    errors = validate_person(incoming, Path(args.file))
+    if errors:
+        raise SystemExit("\n".join(errors))
+
+    paths = person_files(root)
+    existing_path = next(
+        (
+            path
+            for path in paths
+            if (person := read_json(path)).get("id") == incoming["id"]
+            or person.get("name") == incoming["name"]
+            or incoming["name"] in person.get("aliases", [])
+        ),
+        None,
+    )
+    person = read_json(existing_path) if existing_path else {}
+    for field in ("aliases", "organizations", "offers", "needs", "traits", "evidence", "risks"):
+        person[field] = merge_unique(person.get(field, []), incoming.get(field, []))
+    for field in ("id", "name", "tier", "relationship_status"):
+        person[field] = incoming[field]
+    person["needs_confirmation"] = bool(incoming.get("needs_confirmation", False))
+    if not person["needs_confirmation"]:
+        person["risks"] = [risk for risk in person["risks"] if risk != "扫描提取结果尚未人工确认"]
+    person["updated_at"] = now_iso()
+
+    target = root / "people" / ("formal" if person["tier"] == "formal" else "candidates") / f'{person["id"]}.json'
+    if existing_path and existing_path != target:
+        existing_path.unlink()
+    write_json(target, person)
+    print(f"已更新人物档案：{person['name']}（{person['tier']}）")
+    return 0
+
+
+def person_files(root: Path) -> list[Path]:
+    return sorted((root / "people" / "formal").glob("*.json")) + sorted(
+        (root / "people" / "candidates").glob("*.json")
+    )
+
+
+def validate_person(payload: dict, path: Path) -> list[str]:
+    errors = []
+    for field in ("id", "name", "tier", "offers", "needs", "evidence"):
+        if field not in payload:
+            errors.append(f"{path}: 缺少字段 {field}")
+    if payload.get("tier") not in {"formal", "candidate"}:
+        errors.append(f"{path}: tier 必须是 formal 或 candidate")
+    for field in ("offers", "needs", "traits", "risks", "evidence"):
+        if field in payload and not isinstance(payload[field], list):
+            errors.append(f"{path}: {field} 必须是列表")
+    for evidence in payload.get("evidence", []):
+        if evidence.get("source_type") not in {"user_provided", "public_verified", "ai_inference"}:
+            errors.append(f"{path}: evidence.source_type 无效")
+    return errors
+
+
+def command_validate(_: argparse.Namespace) -> int:
+    root = data_dir()
+    files = person_files(root)
+    errors = []
+    for path in files:
+        try:
+            payload = read_json(path)
+            errors.extend(validate_person(payload, path))
+        except Exception as exc:
+            errors.append(f"{path}: 无法读取 JSON：{exc}")
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        return 1
+    print(f"验证通过：{len(files)} 个人物档案")
+    return 0
+
+
+def terms(values: list[str]) -> set[str]:
+    result = set()
+    for value in values:
+        normalized = re.sub(r"[\s，。；、,/]+", " ", value.lower())
+        result.update(part for part in normalized.split() if len(part) >= 2)
+        result.add(value.lower().strip())
+    return {item for item in result if item}
+
+
+def directional_score(offers: list[str], needs: list[str]) -> tuple[float, list[str]]:
+    offer_terms = terms(offers)
+    need_terms = terms(needs)
+    hits = []
+    for offer in offer_terms:
+        for need in need_terms:
+            if offer in need or need in offer:
+                hits.append(f"{offer} ↔ {need}")
+    denominator = max(1, min(len(offer_terms), len(need_terms)))
+    return min(1.0, len(set(hits)) / denominator), sorted(set(hits))
+
+
+def command_match(_: argparse.Namespace) -> int:
+    root = data_dir()
+    people = [read_json(path) for path in person_files(root)]
+    config = read_json(root / "config.json")
+    threshold = float(config.get("matching_threshold", 0.45))
+    matches = []
+    for index, left in enumerate(people):
+        for right in people[index + 1 :]:
+            left_to_right, lr_hits = directional_score(left.get("offers", []), right.get("needs", []))
+            right_to_left, rl_hits = directional_score(right.get("offers", []), left.get("needs", []))
+            score = round((left_to_right + right_to_left) / 2, 3)
+            if score >= threshold:
+                matches.append(
+                    {
+                        "left_id": left["id"],
+                        "left_name": left["name"],
+                        "right_id": right["id"],
+                        "right_name": right["name"],
+                        "score": score,
+                        "left_can_help_right": lr_hits,
+                        "right_can_help_left": rl_hits,
+                        "requires_human_review": True,
+                    }
+                )
+    payload = {"created_at": now_iso(), "threshold": threshold, "matches": sorted(matches, key=lambda x: -x["score"])}
+    output = root / "opportunities" / "latest.json"
+    write_json(output, payload)
+    print(f"发现 {len(matches)} 组待审阅合作机会：{output}")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description=__doc__)
+    sub = result.add_subparsers(dest="command", required=True)
+    sub.add_parser("init", help="创建仓库外私有实例").set_defaults(func=command_init)
+    scan = sub.add_parser("scan", help="扫描 Markdown、TXT 和 DOCX 材料")
+    scan.add_argument("source")
+    scan.add_argument("--limit", type=int, help="仅扫描前 N 个文件，用于小批量内测")
+    scan.set_defaults(func=command_scan)
+    import_scan = sub.add_parser("import-scan", help="将扫描结果导入候选库，保留待确认标记")
+    import_scan.add_argument("--scan", help="指定扫描结果 JSON；默认使用最新结果")
+    import_scan.set_defaults(func=command_import_scan)
+    upsert = sub.add_parser("upsert", help="新增或更新一份经过审阅的人物 JSON")
+    upsert.add_argument("file")
+    upsert.set_defaults(func=command_upsert)
+    sub.add_parser("validate", help="验证私有人物档案").set_defaults(func=command_validate)
+    sub.add_parser("match", help="计算双向价值匹配").set_defaults(func=command_match)
+    return result
+
+
+if __name__ == "__main__":
+    args = parser().parse_args()
+    raise SystemExit(args.func(args))
