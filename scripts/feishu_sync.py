@@ -214,14 +214,24 @@ def private_people() -> list[dict]:
 
 
 def feishu_fields(person: dict) -> dict:
+    # 背调状态映射
+    check_status_map = {
+        "pending": "待核实",
+        "clean": "✅ 无风险",
+        "warning": "⚠️ 有疑点",
+        "risk": "🔴 有风险",
+    }
+    
     return {
         "人物ID": person["id"],
         "姓名": person["name"],
+        "公司": person.get("company", ""),
+        "职位": person.get("title", ""),
         "分层": "正式人脉" if person.get("tier") == "formal" else "候选线索",
         "关系状态": person.get("relationship_status", "unknown"),
         "可提供价值": "\n".join(person.get("offers", [])),
         "当前需求": "\n".join(person.get("needs", [])),
-        "人物特点": "\n".join(person.get("traits", [])),
+        "背调状态": check_status_map.get(person.get("background_check_status", "pending"), "待核实"),
         "风险提示": "\n".join(str(item) for item in person.get("risks", [])),
         "更新时间": person.get("updated_at", ""),
     }
