@@ -344,8 +344,8 @@ def command_upsert(args: argparse.Namespace) -> int:
         incoming["offers"] = merge_unique(incoming["offers"], incoming.pop("resources"))
     for field in ("aliases", "organizations", "offers", "needs", "traits", "evidence", "risks"):
         incoming.setdefault(field, [])
-    # 新增：标记背调状态
-    incoming.setdefault("background_check_status", "pending")
+    # 新增：标记背调状态（中文）
+    incoming.setdefault("背景调查状态", "待核实")
     errors = validate_person(incoming, Path(args.file))
     if errors:
         raise SystemExit("\n".join(errors))
@@ -364,8 +364,10 @@ def command_upsert(args: argparse.Namespace) -> int:
     person = read_json(existing_path) if existing_path else {}
     for field in ("aliases", "organizations", "offers", "needs", "traits", "evidence", "risks"):
         person[field] = merge_unique(person.get(field, []), incoming.get(field, []))
-    for field in ("id", "name", "tier", "relationship_status", "background_check_status"):
-        person[field] = incoming.get(field, person.get(field, "pending"))
+    for field in ("id", "name", "tier", "relationship_status"):
+        person[field] = incoming.get(field, person.get(field))
+    # 背调状态单独处理
+    person["背景调查状态"] = incoming.get("背景调查状态", person.get("背景调查状态", "待核实"))
     person["needs_confirmation"] = bool(incoming.get("needs_confirmation", False))
     if not person["needs_confirmation"]:
         person["risks"] = [risk for risk in person["risks"] if risk != "扫描提取结果尚未人工确认"]
@@ -515,7 +517,7 @@ def command_update_check(args: argparse.Namespace) -> int:
     """更新背调结果"""
     root = data_dir()
     person_id = args.person_id
-    check_result = args.result  # "clean" / "warning" / "risk"
+    check_result = args.result  # "待核实" / "无风险" / "有疑点" / "有风险"
     risks = json.loads(args.risks) if args.risks else []
     
     # 查找人物文件
@@ -529,7 +531,7 @@ def command_update_check(args: argparse.Namespace) -> int:
         return 1
     
     person = read_json(target_path)
-    person["background_check_status"] = check_result
+    person["背景调查状态"] = check_result
     person["risks"] = risks
     person["updated_at"] = now_iso()
     write_json(target_path, person)
@@ -600,7 +602,7 @@ def parser() -> argparse.ArgumentParser:
     
     update_check = sub.add_parser("update-check", help="更新背调结果")
     update_check.add_argument("person_id", help="人物ID")
-    update_check.add_argument("result", choices=["pending", "clean", "warning", "risk"], help="背调结果")
+    update_check.add_argument("result", choices=["待核实", "无风险", "有疑点", "有风险"], help="背调结果")
     update_check.add_argument("--risks", help="风险列表 JSON")
     update_check.set_defaults(func=command_update_check)
     

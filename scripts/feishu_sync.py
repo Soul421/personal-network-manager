@@ -214,12 +214,12 @@ def private_people() -> list[dict]:
 
 
 def feishu_fields(person: dict) -> dict:
-    # 背调状态映射
+    # 背调状态映射（带图标）
     check_status_map = {
-        "pending": "待核实",
-        "clean": "✅ 无风险",
-        "warning": "⚠️ 有疑点",
-        "risk": "🔴 有风险",
+        "待核实": "⏳ 待核实",
+        "无风险": "✅ 无风险",
+        "有疑点": "⚠️ 有疑点",
+        "有风险": "🔴 有风险",
     }
     
     return {
@@ -231,7 +231,7 @@ def feishu_fields(person: dict) -> dict:
         "关系状态": person.get("relationship_status", "unknown"),
         "可提供价值": "\n".join(person.get("offers", [])),
         "当前需求": "\n".join(person.get("needs", [])),
-        "背调状态": check_status_map.get(person.get("background_check_status", "pending"), "待核实"),
+        "背调状态": check_status_map.get(person.get("背景调查状态", "待核实"), "⏳ 待核实"),
         "风险提示": "\n".join(str(item) for item in person.get("risks", [])),
         "更新时间": person.get("updated_at", ""),
     }
