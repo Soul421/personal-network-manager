@@ -76,11 +76,41 @@ def request_json(method: str, path: str, payload: dict | None = None, token: str
 
 
 def app_credentials() -> tuple[str, str]:
+    # 优先从环境变量读取
     app_id = os.environ.get("FEISHU_APP_ID")
     app_secret = os.environ.get("FEISHU_APP_SECRET")
-    if not app_id or not app_secret:
-        raise SystemExit("缺少 FEISHU_APP_ID 或 FEISHU_APP_SECRET。请通过环境变量或系统密钥存储提供。")
-    return app_id, app_secret
+    if app_id and app_secret:
+        return app_id, app_secret
+
+    # 尝试从 lark-cli 配置读取
+    try:
+        result = subprocess.run(
+            ["lark-cli", "config", "show"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            config = json.loads(result.stdout)
+            app_id = config.get("appId")
+            # appSecret 在 lark-cli 中被隐藏，需要从其他方式获取
+            if app_id:
+                # 尝试从系统钥匙串获取
+                try:
+                    secret_result = subprocess.run(
+                        ["security", "find-generic-password",
+                         "-s", "lark-cli",
+                         "-a", app_id,
+                         "-w"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if secret_result.returncode == 0:
+                        app_secret = secret_result.stdout.strip()
+                        return app_id, app_secret
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    raise SystemExit("缺少飞书凭证。请设置环境变量 FEISHU_APP_ID 和 FEISHU_APP_SECRET，或确保 lark-cli 已配置。")
 
 
 def tenant_token() -> str:
@@ -96,6 +126,79 @@ def tenant_token() -> str:
 def command_doctor(_: argparse.Namespace) -> int:
     tenant_token()
     print("飞书自建应用凭证有效，已成功获取应用访问凭证（令牌未输出）。")
+    return 0
+
+
+def command_create_base(args: argparse.Namespace) -> int:
+    """自动创建飞书多维表格并配置字段"""
+    token = tenant_token()
+
+    # 创建多维表格
+    result = request_json(
+        "POST",
+        "/bitable/v1/apps",
+        {"name": args.name or "人脉管理", "folder_token": args.folder or ""},
+        token,
+    )
+    app_token = result["data"]["app"]["app_token"]
+    url = result["data"]["app"]["url"]
+    print(f"已创建多维表格：{url}")
+
+    # 获取默认表格ID
+    result = request_json("GET", f"/bitable/v1/apps/{app_token}/tables", token=token)
+    table_id = result["data"]["items"][0]["table_id"]
+
+    # 重命名默认表格
+    request_json(
+        "PATCH",
+        f"/bitable/v1/apps/{app_token}/tables/{table_id}",
+        {"name": "人物档案"},
+        token,
+    )
+
+    # 创建字段
+    fields = [
+        {"field_name": "人物ID", "type": 1},  # 文本
+        {"field_name": "姓名", "type": 1},
+        {"field_name": "公司", "type": 1},
+        {"field_name": "职位", "type": 1},
+        {"field_name": "分层", "type": 3, "property": {"options": [{"name": "正式人脉"}, {"name": "候选线索"}]}},  # 单选
+        {"field_name": "关系状态", "type": 3, "property": {"options": [{"name": "formal"}, {"name": "candidate"}, {"name": "unknown"}]}},
+        {"field_name": "可提供价值", "type": 1},  # 多行文本
+        {"field_name": "当前需求", "type": 1},
+        {"field_name": "人物特点", "type": 1},
+        {"field_name": "风险提示", "type": 1},
+        {"field_name": "背景信息", "type": 1},
+        {"field_name": "标签", "type": 1},
+        {"field_name": "更新时间", "type": 1},
+    ]
+    for field in fields:
+        try:
+            request_json(
+                "POST",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+                field,
+                token,
+            )
+        except RuntimeError:
+            pass  # 字段可能已存在
+
+    # 保存配置
+    raw = os.environ.get("PNM_DATA_DIR")
+    if raw:
+        config_path = Path(raw).expanduser().resolve() / "sync" / "feishu-config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            json.dumps({"app_token": app_token, "table_id": table_id, "url": url}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"配置已保存到：{config_path}")
+
+    print(f"\nApp Token: {app_token}")
+    print(f"Table ID: {table_id}")
+    print(f"\n设置环境变量后即可同步：")
+    print(f"  export FEISHU_BASE_APP_TOKEN={app_token}")
+    print(f"  export FEISHU_PEOPLE_TABLE_ID={table_id}")
     return 0
 
 
@@ -227,9 +330,16 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     sub = result.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="验证飞书自建应用凭证").set_defaults(func=command_doctor)
+
+    create_base = sub.add_parser("create-base", help="自动创建飞书多维表格")
+    create_base.add_argument("--name", help="表格名称，默认'人脉管理'")
+    create_base.add_argument("--folder", help="目标文件夹 token（可选）")
+    create_base.set_defaults(func=command_create_base)
+
     sync = sub.add_parser("sync", help="同步人物到已配置的多维表格")
     sync.add_argument("--dry-run", action="store_true")
     sync.set_defaults(func=command_sync)
+
     notify = sub.add_parser("notify", help="通过飞书机器人发送人脉提醒")
     target = notify.add_mutually_exclusive_group()
     target.add_argument("--open-id", help="接收人的 open_id")

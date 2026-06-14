@@ -336,6 +336,12 @@ def command_upsert(args: argparse.Namespace) -> int:
     incoming.setdefault("id", person_id(incoming["name"]))
     incoming.setdefault("tier", "candidate")
     incoming.setdefault("relationship_status", "unknown")
+    # 支持 resources 字段自动合并到 offers
+    if incoming.get("resources") and not incoming.get("offers"):
+        incoming["offers"] = incoming.pop("resources")
+    elif incoming.get("resources"):
+        incoming.setdefault("offers", [])
+        incoming["offers"] = merge_unique(incoming["offers"], incoming.pop("resources"))
     for field in ("aliases", "organizations", "offers", "needs", "traits", "evidence", "risks"):
         incoming.setdefault(field, [])
     errors = validate_person(incoming, Path(args.file))
@@ -419,16 +425,88 @@ def terms(values: list[str]) -> set[str]:
     return {item for item in result if item}
 
 
+# 语义相关词映射：当字面不匹配时，用这个做扩展匹配
+SEMANTIC_MAP = {
+    "融资": ["投资", "资本", "资金", "钱", "VC", "天使", "A轮", "B轮", "估值"],
+    "投资": ["融资", "资本", "资金", "LP", "GP", "基金"],
+    "技术": ["研发", "工程", "架构", "算法", "AI", "开发", "编程", "代码"],
+    "AI": ["人工智能", "大模型", "LLM", "机器学习", "深度学习", "算法"],
+    "市场": ["营销", "推广", "品牌", "渠道", "运营", "增长", "获客"],
+    "客户": ["企业", "B端", "C端", "用户", "流量", "转化"],
+    "电商": ["零售", "消费", "供应链", "直播", "带货"],
+    "医疗": ["健康", "医药", "医院", "诊所", "诊断", "制药"],
+    "教育": ["培训", "课程", "知识", "学习", "学校"],
+    "制造业": ["工厂", "生产", "供应链", "品质", "产能"],
+    "云": ["云计算", "SaaS", "PaaS", "IaaS", "服务器", "算力"],
+}
+
+
+def expand_terms(raw_terms: set[str]) -> set[str]:
+    """对原始词做语义扩展"""
+    expanded = set(raw_terms)
+    for term in raw_terms:
+        for key, synonyms in SEMANTIC_MAP.items():
+            if term in synonyms or key in term:
+                expanded.update(synonyms)
+                expanded.add(key)
+    return expanded
+
+
 def directional_score(offers: list[str], needs: list[str]) -> tuple[float, list[str]]:
     offer_terms = terms(offers)
     need_terms = terms(needs)
+
+    # 第一层：字面匹配
     hits = []
     for offer in offer_terms:
         for need in need_terms:
             if offer in need or need in offer:
                 hits.append(f"{offer} ↔ {need}")
+
+    # 第二层：语义扩展匹配
+    if not hits:
+        expanded_offers = expand_terms(offer_terms)
+        expanded_needs = expand_terms(need_terms)
+        for offer in expanded_offers:
+            for need in expanded_needs:
+                if offer in need or need in offer:
+                    hits.append(f"{offer} ↔ {need} (语义)")
+
     denominator = max(1, min(len(offer_terms), len(need_terms)))
     return min(1.0, len(set(hits)) / denominator), sorted(set(hits))
+
+
+def find_three_way_matches(people: list[dict], threshold: float) -> list[dict]:
+    """寻找三方合作机会：A有X，B有Y，C需要X+Y"""
+    matches = []
+    for i, a in enumerate(people):
+        for j, b in enumerate(people[i + 1 :], start=i + 1):
+            for c in people[j + 1 :]:
+                a_offers = set(a.get("offers", []))
+                b_offers = set(b.get("offers", []))
+                c_needs = set(c.get("needs", []))
+
+                # C 的需求能被 A+B 满足
+                a_covers = terms(a_offers) & terms(c_needs)
+                b_covers = terms(b_offers) & terms(c_needs)
+
+                if a_covers and b_covers and len(a_covers | b_covers) >= 2:
+                    score = min(1.0, len(a_covers | b_covers) / max(1, len(c_needs)))
+                    if score >= threshold:
+                        matches.append(
+                            {
+                                "type": "three_way",
+                                "participants": [a["name"], b["name"], c["name"]],
+                                "participant_ids": [a["id"], b["id"], c["id"]],
+                                "a_offers": sorted(a_covers),
+                                "b_offers": sorted(b_covers),
+                                "c_needs": sorted(c_needs),
+                                "score": round(score, 3),
+                                "description": f"{a['name']}的{', '.join(sorted(a_covers))} + {b['name']}的{', '.join(sorted(b_covers))} 可满足 {c['name']}的{', '.join(sorted(c_needs))}",
+                                "requires_human_review": True,
+                            }
+                        )
+    return matches
 
 
 def command_match(_: argparse.Namespace) -> int:
@@ -436,7 +514,10 @@ def command_match(_: argparse.Namespace) -> int:
     people = [read_json(path) for path in person_files(root)]
     config = read_json(root / "config.json")
     threshold = float(config.get("matching_threshold", 0.45))
+
     matches = []
+
+    # 双向匹配
     for index, left in enumerate(people):
         for right in people[index + 1 :]:
             left_to_right, lr_hits = directional_score(left.get("offers", []), right.get("needs", []))
@@ -445,6 +526,7 @@ def command_match(_: argparse.Namespace) -> int:
             if score >= threshold:
                 matches.append(
                     {
+                        "type": "two_way",
                         "left_id": left["id"],
                         "left_name": left["name"],
                         "right_id": right["id"],
@@ -452,9 +534,16 @@ def command_match(_: argparse.Namespace) -> int:
                         "score": score,
                         "left_can_help_right": lr_hits,
                         "right_can_help_left": rl_hits,
+                        "description": f"{left['name']} ↔ {right['name']}",
                         "requires_human_review": True,
                     }
                 )
+
+    # 三方匹配（人数>=3时才跑）
+    if len(people) >= 3:
+        three_way = find_three_way_matches(people, threshold)
+        matches.extend(three_way)
+
     payload = {"created_at": now_iso(), "threshold": threshold, "matches": sorted(matches, key=lambda x: -x["score"])}
     output = root / "opportunities" / "latest.json"
     write_json(output, payload)
