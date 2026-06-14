@@ -183,6 +183,22 @@ def command_create_base(args: argparse.Namespace) -> int:
         except RuntimeError:
             pass  # 字段可能已存在
 
+    # 授予当前用户编辑权限
+    try:
+        # 获取当前用户 open_id
+        user_result = request_json("GET", "/authen/v1/user_info", token=token)
+        user_open_id = user_result.get("data", {}).get("open_id")
+        if user_open_id:
+            request_json(
+                "POST",
+                f"/drive/v1/permissions/{app_token}/members?type=bitable",
+                {"member_type": "openid", "member_id": user_open_id, "perm": "full_access"},
+                token,
+            )
+            print(f"已授予用户 {user_open_id} 编辑权限")
+    except Exception as e:
+        print(f"授权提示：{e}")
+
     # 保存配置
     raw = os.environ.get("PNM_DATA_DIR")
     if raw:
