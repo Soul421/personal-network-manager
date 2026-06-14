@@ -1,6 +1,6 @@
 ---
 name: personal-network-manager
-description: "管理个人关系网络并发现双向合作机会。用户介绍一个人、提到新认识的人、提供人物访谈或公司资料、询问谁值得合作、希望撮合两个人、核验人物背景、管理人脉或同步飞书时使用。自动提取人物、资源、需求和关系状态，区分正式人脉与候选线索，谨慎调查公开背景并提示冲突风险。"
+description: "用自然语言管理人脉网络：录入人物信息自动同步飞书多维表格，全网背调发现风险与夸大，智能匹配合作机会。当用户说'帮我记一下这个人'、'介绍一下XX'、'谁可以跟XX合作'、'帮我查查这个人'、'录入人脉'、'同步飞书'时使用。"
 license: MIT
 metadata:
   lifecycle: validating
@@ -8,79 +8,125 @@ metadata:
 
 # Personal Network Manager
 
-将公开 Skill 框架与使用者的私有人物数据分开。读取或写入人物资料前，先确认私有实例
-路径；不要把真实人物资料写入本 Skill 目录。
+用自然语言管理你的人脉网络，自动同步飞书，智能发现合作机会。
+
+## 核心能力
+
+### 1. 自然语言录入
+
+用户用日常语言描述一个人，AI 自动提取并结构化：
+
+```
+用户：帮我记一下，张三，小米产品经理，擅长AI产品，之前在字节做过抖音电商
+AI：已录入张三的信息。公司：小米，职位：产品经理，背景：字节跳动（抖音电商），专长：AI产品
+```
+
+支持的信息类型：
+- 基本信息：姓名、公司、职位、联系方式
+- 背景信息：职业经历、教育背景、行业经验
+- 资源与需求：对方能提供什么、在找什么
+- 个人特点：性格、风格、合作偏好
+
+### 2. 飞书多维表格同步
+
+录入的信息自动同步到飞书 Base，用户可以在飞书里：
+- 查看所有人脉的表格视图
+- 直接在飞书里编辑和补充信息
+- 使用飞书的筛选、排序、分组功能
+- 通过飞书机器人接收新增人脉提醒
+
+同步流程：
+```
+用户描述 → AI 结构化 → 本地存储 → 自动同步飞书 Base
+```
+
+### 3. 全网背景调查
+
+新增人物时自动进行公开信息调查：
+
+**调查范围**：
+- 公司工商信息（注册资本、股东、经营状态）
+- 融资历史（轮次、金额、投资方）
+- 个人社交媒体（LinkedIn、微博、公众号）
+- 新闻报道（正面/负面）
+- 司法风险（诉讼、失信、行政处罚）
+
+**输出结果**：
+```
+背调报告：李四
+├─ 基本信息：XX公司CEO，注册资本500万
+├─ 风险提示：⚠️ 2024年有2起劳动仲裁
+├─ 信息核实：自称A轮融资2000万，但工商信息未显示变更
+└─ 建议：进一步核实融资真实性
+```
+
+### 4. 智能合作匹配
+
+分析人脉库中的资源与需求，发现合作机会：
+
+**双向匹配**：
+```
+A 有 X 资源，B 需要 X → 建议连接 A 和 B
+```
+
+**多向匹配**：
+```
+A 有技术，B 有渠道，C 有资金 → 建议三方合作
+```
+
+**触发条件**：
+- 新增人脉时自动扫描匹配
+- 用户主动询问「谁可以跟XX合作」
+- 定期扫描发现新的合作机会
 
 ## 默认流程
 
-1. 识别人物、公司、职位、资源、需求、特点和关系线索。
-2. 判断人物属于正式人脉还是候选线索。
-   - 使用者采访过、见过、合作过或直接沟通过：正式人脉。
-   - 尚未确认存在直接关系：候选线索。
-3. 高可信别名自动合并；同名或身份歧义进入待确认清单。
-4. 将明确事实、公开核验事实和 AI 推断分别保存。
-5. 新人物执行基础公开背景调查；准备合作或出现风险时再做深度尽调。
-6. 比较人物可提供的价值与其他人物的需求，生成双向合作建议。
-7. 高匹配机会主动提醒使用者，但不要自动联系任何人。
-8. 明确信息可以自动保存；敏感信息、歧义、删除和冲突覆盖需要确认。
+1. **识别**：从用户输入中提取人物、公司、职位、资源、需求
+2. **分类**：判断是正式人脉还是候选线索
+3. **调查**：新人物执行公开背景调查
+4. **存储**：结构化保存到本地数据库
+5. **同步**：自动同步到飞书多维表格
+6. **匹配**：分析资源需求，发现合作机会
+7. **提醒**：高匹配机会主动提醒用户
 
-## 数据来源
+## 数据来源标记
 
-每条重要信息标记来源类型：
+每条信息标记来源类型：
 
-- `user_provided`：使用者直接提供或从私有材料提取。
-- `public_verified`：来自可追溯公开来源。
-- `ai_inference`：基于已有证据的谨慎推断。
+| 来源 | 说明 | 可信度 |
+|------|------|--------|
+| `user_provided` | 用户直接提供 | 取决于用户 |
+| `public_verified` | 公开信息核实 | 高 |
+| `ai_inference` | AI 推断 | 需验证 |
 
-公开调查优先使用官方、监管、司法、工商、公司官网和主流媒体。保留来源链接、发布日
-期、查询日期和可信度。发现冲突或无法核验时，展示证据并提示风险，不对人物诚信作无
-证据定性。详细规则见 [references/research-policy.md](references/research-policy.md)。
+## 飞书配置
 
-## 本地操作
-
-运行脚本前设置私有实例路径：
+详见 [references/feishu-setup.md](references/feishu-setup.md)
 
 ```bash
-export PNM_DATA_DIR="/path/to/private/personal-network-data"
-python3 scripts/network_manager.py init
-python3 scripts/network_manager.py scan "/path/to/materials"
-python3 scripts/network_manager.py import-scan
-python3 scripts/network_manager.py upsert "/path/to/reviewed-person.json"
-python3 scripts/network_manager.py validate
-python3 scripts/network_manager.py match
-```
+# 设置环境变量
+export FEISHU_APP_ID="your_app_id"
+export FEISHU_APP_SECRET="your_app_secret"
 
-扫描结果只是待审阅候选，不得直接视为确认事实。数据结构见
-[references/data-schema.md](references/data-schema.md)。使用者直接介绍人物时，先将提取
-出的明确事实、资源、需求、特点和证据整理为人物 JSON，再用 `upsert` 写入；不要要求
-使用者手工编辑档案。
-
-## 飞书同步
-
-每位使用者使用自己的飞书账号或工作空间创建自建应用，并通过环境变量或系统密钥存储
-提供 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。不要要求使用者把密钥贴进对话、命令参
-数、配置文件或仓库。
-
-先执行安全的连通性检查，再同步多维表格：
-
-```bash
+# 测试连通性
 python3 scripts/feishu_sync.py doctor
-python3 scripts/feishu_sync.py sync --dry-run
-python3 scripts/feishu_sync.py notify --open-id "<open_id>" --message "内测提醒" --dry-run
+
+# 同步到飞书
+python3 scripts/feishu_sync.py sync --dry-run  # 预览
+python3 scripts/feishu_sync.py sync            # 正式同步
 ```
 
-`sync` 按人物 ID 新增或更新，避免重复追加。真实写入或发送提醒前向使用者展示目标
-Base、表格、记录数量和接收对象。详细配置见
-[references/feishu-setup.md](references/feishu-setup.md)。
+## 隐私保护
 
-## 发布保护
+- 本 Skill 只保存框架和虚构示例
+- 真实数据保存在用户指定的私有目录
+- 背调只使用公开信息，不侵入隐私
+- 所有合作建议需用户确认，不自动联系
+- 发布前运行隐私扫描，防止真实数据泄露
 
-公开发布前必须运行：
+## 发布检查
 
 ```bash
 python3 scripts/privacy_scan.py .
 python3 -m unittest discover -s tests -v
 ```
-
-隐私扫描发现疑似密钥、真实私有档案或运行产物时，停止发布并处理阻断项。
-公开文档和模板只能使用明确标注的虚构人物与虚构企业，不得为了演示方便复制真实案例。

@@ -1,68 +1,132 @@
 # Personal Network Manager
 
-一个面向 AI Agent 的开源人脉管理 Skill。它帮助使用者从自然语言和材料中识别人
-物，维护正式人脉与候选线索，核验公开背景，并发现能够为双方创造价值的合作机会。
+用自然语言管理你的人脉网络，自动同步飞书，智能发现合作机会。
 
-当前状态：`validating`。请先在私有数据上内测，再用于重要合作判断。
+## 这是什么
 
-## 能力
+一个人脉管理 Skill，让 AI Agent 帮你：
 
-- 识别人名、别名、公司、职位和来源证据
-- 区分正式人脉与候选线索
-- 分开保存使用者描述、公开核验和 AI 推断
-- 生成双向价值匹配和撮合建议
-- 通过飞书自建应用同步多维表格
-- 发布前拦截密钥、私有档案和运行产物
+1. **自然语言录入**：直接说「张三，小米产品经理，擅长AI产品，之前在字节做过抖音电商」，自动提取并结构化存储
+2. **飞书多维表格同步**：录入的人脉自动同步到飞书 Base，你可以在飞书里随时查看和编辑
+3. **全网背景调查**：新增人物时自动搜索公开信息，帮你发现对方资料中的夸大成分或潜在风险
+4. **智能合作匹配**：自动分析你的所有人脉，发现 A 和 B 之间、甚至 A、B、C 三方之间的合作可能性
 
-## 隐私设计
+## 核心场景
 
-本仓库只保存框架、空模板和虚构测试。真实人物资料必须放在仓库外的私有实例目录。
-示例中的人物、企业和合作机会均为明确虚构内容，不对应任何真实主体。
+### 场景一：见完一个人，一句话录入
 
-```bash
-export PNM_DATA_DIR="$HOME/.personal-network-manager/data"
-python3 scripts/network_manager.py init
 ```
+今天见了李总，他是XX公司的CTO，之前在腾讯做了8年云计算，
+现在在做企业级AI助手，融了A轮，团队30人。
+```
+
+AI 会自动提取姓名、公司、职位、背景、阶段，存入数据库并同步飞书。
+
+### 场景二：录入时自动背调
+
+新增人物时，Skill 会搜索该人的公开信息：
+- 公司工商信息、融资历史
+- 个人 LinkedIn、社交媒体
+- 新闻报道、行业评价
+
+然后告诉你：「对方说自己是XX公司创始人，但工商信息显示他只是股东之一」或者「这家公司在2024年有过劳动纠纷」。
+
+### 场景三：智能发现合作机会
+
+当你的人脉库里有足够多人时，Skill 会自动分析：
+
+```
+你认识的张三在找AI技术合伙人，你认识的李四正好是AI领域的技术专家。
+你们三个下周都要去上海，要不要安排聊聊？
+```
+
+支持多对多匹配：A 的资源 + B 的需求 + C 的渠道 = 一个三方合作机会。
 
 ## 快速开始
 
+### 1. 安装
+
 ```bash
+# 克隆仓库
+git clone https://github.com/Soul421/personal-network-manager.git
+cd personal-network-manager
+
+# 初始化数据目录
 python3 scripts/network_manager.py init
-python3 scripts/network_manager.py scan "/path/to/materials"
-python3 scripts/network_manager.py import-scan
-python3 scripts/network_manager.py upsert "/path/to/reviewed-person.json"
-python3 scripts/network_manager.py validate
-python3 scripts/network_manager.py match
 ```
 
-扫描只生成待审阅候选，不会自动把材料中出现的人认定为正式人脉。
+### 2. 录入人脉
 
-## 飞书
+直接用自然语言告诉 AI：
 
-在飞书开发者后台创建自己的自建应用，启用机器人及多维表格权限。把 App ID 和 App
-Secret 放入环境变量或系统密钥存储，然后执行：
+```
+帮我记一下：王五，杭州，做跨境电商的，年营收大概5000万，
+现在想找国内的品牌方合作，他那边有东南亚的渠道。
+```
+
+AI 会自动结构化并保存。
+
+### 3. 同步飞书（可选）
+
+如果你用飞书，可以配置自动同步到多维表格：
 
 ```bash
+# 设置飞书应用凭证
+export FEISHU_APP_ID="your_app_id"
+export FEISHU_APP_SECRET="your_app_secret"
+
+# 测试连通性
 python3 scripts/feishu_sync.py doctor
-python3 scripts/feishu_sync.py sync --dry-run
-python3 scripts/feishu_sync.py notify --open-id "<open_id>" --message "内测提醒" --dry-run
+
+# 同步到飞书
+python3 scripts/feishu_sync.py sync
 ```
 
-同步按稳定的“人物ID”新增或更新记录，避免重复追加。机器人提醒支持私聊或群聊；取消
-`--dry-run` 前先确认接收对象。
+详见 [飞书配置指南](references/feishu-setup.md)。
 
-详见 [references/feishu-setup.md](references/feishu-setup.md)。
+### 4. 背景调查
 
-## 发布检查
+录入新人物时，AI 会自动进行公开信息调查。你也可以手动触发深度调查：
 
-```bash
-python3 scripts/privacy_scan.py .
-python3 -m unittest discover -s tests -v
+```
+帮我查一下李四这个人，特别是他之前那家公司的情况。
 ```
 
-隐私扫描会阻断疑似密钥、真实飞书 ID、本机用户绝对路径、私有运行目录和私有人脉实例
-路径。首次发布前建议再人工检查一次提交文件列表，确认没有访谈原文、真实人物档案或
-同步运行产物。
+### 5. 合作匹配
+
+```
+帮我看看现在人脉库里有没有人可以跟张三合作。
+```
+
+或者：
+
+```
+帮我分析一下，我认识的人里面，谁最有可能帮我对接医院资源。
+```
+
+## 隐私设计
+
+- 本仓库只包含框架和虚构示例，不包含任何真实人物数据
+- 真实数据保存在你本地的私有目录
+- 所有背景调查只使用公开信息
+- 不会自动联系任何人，所有合作建议需要你确认
+
+## 数据结构
+
+每个人物包含：
+
+| 字段 | 说明 |
+|------|------|
+| 姓名 | 必填，支持别名 |
+| 公司 | 公司名称、职位 |
+| 背景 | 职业经历、教育背景 |
+| 资源 | 对方能提供什么 |
+| 需求 | 对方在找什么 |
+| 风险 | 背调发现的问题 |
+| 关系状态 | 正式人脉 / 候选线索 |
+| 来源 | user_provided / public_verified / ai_inference |
+
+详见 [数据结构文档](references/data-schema.md)。
 
 ## License
 
