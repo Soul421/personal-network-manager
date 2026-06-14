@@ -222,13 +222,28 @@ def feishu_fields(person: dict) -> dict:
         "有风险": "🔴 有风险",
     }
     
+    # 分层映射
+    tier_map = {
+        "formal": "🤝 正式人脉",
+        "candidate": "📋 候选线索",
+    }
+    
+    # 关系状态映射
+    relation_map = {
+        "formal": "已合作",
+        "candidate": "待发展",
+        "unknown": "待了解",
+        "met": "已见面",
+        "connected": "已建立联系",
+    }
+    
     return {
         "人物ID": person["id"],
         "姓名": person["name"],
         "公司": person.get("company", ""),
         "职位": person.get("title", ""),
-        "分层": "正式人脉" if person.get("tier") == "formal" else "候选线索",
-        "关系状态": person.get("relationship_status", "unknown"),
+        "分层": tier_map.get(person.get("tier", "candidate"), "📋 候选线索"),
+        "关系状态": relation_map.get(person.get("relationship_status", "unknown"), "待了解"),
         "可提供价值": "\n".join(person.get("offers", [])),
         "当前需求": "\n".join(person.get("needs", [])),
         "背调状态": check_status_map.get(person.get("背景调查状态", "待核实"), "⏳ 待核实"),
