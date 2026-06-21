@@ -12,8 +12,8 @@ SKIP_DIRS = {".git", "__pycache__", ".pytest_cache"}
 PRIVATE_DIR_NAMES = {"data", "private", "runtime", "scan-results", "people", "evidence", "opportunities"}
 SECRET_PATTERNS = {
     "Feishu App Secret": re.compile(
-        r"(?:APP_SECRET\s*=\s*(?!\.\.\.|example|your-)[A-Za-z0-9_-]{12,}|"
-        r"(?i:app[_ -]?secret)\s*[:=]\s*[\"'](?!\.\.\.|example|your-)[A-Za-z0-9_-]{12,}[\"'])"
+        r"(?:APP_SECRET\s*=\s*(?!\.\.\.|example|your[-_])[A-Za-z0-9_-]{12,}|"
+        r"(?i:app[_ -]?secret)\s*[:=]\s*[\"'](?!\.\.\.|example|your[-_])[A-Za-z0-9_-]{12,}[\"'])"
     ),
     "Access token": re.compile(
         r"(?:ACCESS_TOKEN\s*=\s*(?!\.\.\.|example|your-)[A-Za-z0-9._-]{16,}|"

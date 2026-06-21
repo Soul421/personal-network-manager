@@ -167,6 +167,11 @@ def command_create_base(args: argparse.Namespace) -> int:
         {"field_name": "可提供价值", "type": 1},  # 多行文本
         {"field_name": "当前需求", "type": 1},
         {"field_name": "人物特点", "type": 1},
+        {"field_name": "关系强度", "type": 2},
+        {"field_name": "最近联系", "type": 1},
+        {"field_name": "下次跟进", "type": 1},
+        {"field_name": "下一步动作", "type": 1},
+        {"field_name": "分享范围", "type": 1},
         {"field_name": "风险提示", "type": 1},
         {"field_name": "背景信息", "type": 1},
         {"field_name": "标签", "type": 1},
@@ -262,6 +267,14 @@ def feishu_fields(person: dict) -> dict:
         "关系状态": relation_map.get(person.get("relationship_status", "unknown"), "待了解"),
         "可提供价值": "\n".join(person.get("offers", [])),
         "当前需求": "\n".join(person.get("needs", [])),
+        "关系强度": person.get("relationship_strength", ""),
+        "最近联系": person.get("last_contacted_at", ""),
+        "下次跟进": person.get("follow_up_at", ""),
+        "下一步动作": "\n".join(
+            f"{item.get('due', '')} {item.get('action', '')} [{item.get('status', 'open')}]"
+            for item in person.get("next_actions", [])
+        ),
+        "分享范围": person.get("consent", {}).get("share_scope", ""),
         "背调状态": check_status_map.get(person.get("背景调查状态", "待核实"), "⏳ 待核实"),
         "风险提示": "\n".join(str(item) for item in person.get("risks", [])),
         "更新时间": person.get("updated_at", ""),

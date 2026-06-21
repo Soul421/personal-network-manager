@@ -342,7 +342,17 @@ def command_upsert(args: argparse.Namespace) -> int:
     elif incoming.get("resources"):
         incoming.setdefault("offers", [])
         incoming["offers"] = merge_unique(incoming["offers"], incoming.pop("resources"))
-    for field in ("aliases", "organizations", "offers", "needs", "traits", "evidence", "risks"):
+    for field in (
+        "aliases",
+        "organizations",
+        "offers",
+        "needs",
+        "traits",
+        "interactions",
+        "next_actions",
+        "evidence",
+        "risks",
+    ):
         incoming.setdefault(field, [])
     # 新增：标记背调状态（中文）
     incoming.setdefault("背景调查状态", "待核实")
@@ -362,9 +372,34 @@ def command_upsert(args: argparse.Namespace) -> int:
         None,
     )
     person = read_json(existing_path) if existing_path else {}
-    for field in ("aliases", "organizations", "offers", "needs", "traits", "evidence", "risks"):
+    for field in (
+        "aliases",
+        "organizations",
+        "offers",
+        "needs",
+        "traits",
+        "interactions",
+        "next_actions",
+        "evidence",
+        "risks",
+    ):
         person[field] = merge_unique(person.get(field, []), incoming.get(field, []))
-    for field in ("id", "name", "tier", "relationship_status", "company", "title", "phone", "wechat", "city", "notes"):
+    for field in (
+        "id",
+        "name",
+        "tier",
+        "relationship_status",
+        "relationship_strength",
+        "last_contacted_at",
+        "follow_up_at",
+        "consent",
+        "company",
+        "title",
+        "phone",
+        "wechat",
+        "city",
+        "notes",
+    ):
         if field in incoming:
             person[field] = incoming[field]
     # 背调状态单独处理
@@ -395,9 +430,21 @@ def validate_person(payload: dict, path: Path) -> list[str]:
             errors.append(f"{path}: 缺少字段 {field}")
     if payload.get("tier") not in {"formal", "candidate"}:
         errors.append(f"{path}: tier 必须是 formal 或 candidate")
-    for field in ("offers", "needs", "traits", "risks", "evidence"):
+    for field in ("offers", "needs", "traits", "risks", "interactions", "next_actions", "evidence"):
         if field in payload and not isinstance(payload[field], list):
             errors.append(f"{path}: {field} 必须是列表")
+    if "relationship_strength" in payload:
+        strength = payload["relationship_strength"]
+        if not isinstance(strength, int) or not 1 <= strength <= 5:
+            errors.append(f"{path}: relationship_strength 必须是 1-5 的整数")
+    if payload.get("consent") and not isinstance(payload["consent"], dict):
+        errors.append(f"{path}: consent 必须是对象")
+    share_scope = payload.get("consent", {}).get("share_scope") if isinstance(payload.get("consent"), dict) else None
+    if share_scope and share_scope not in {"private_only", "review_before_share", "shareable"}:
+        errors.append(f"{path}: consent.share_scope 无效")
+    for action in payload.get("next_actions", []):
+        if action.get("status") and action["status"] not in {"open", "done", "cancelled"}:
+            errors.append(f"{path}: next_actions.status 无效")
     for evidence in payload.get("evidence", []):
         if evidence.get("source_type") not in {"user_provided", "public_verified", "ai_inference"}:
             errors.append(f"{path}: evidence.source_type 无效")

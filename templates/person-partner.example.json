@@ -10,6 +10,29 @@
   "offers": ["适老化产品供应方"],
   "needs": ["社区健康服务渠道"],
   "traits": ["重视产品落地"],
+  "relationship_strength": 1,
+  "last_contacted_at": "2026-06-14",
+  "follow_up_at": "2026-07-01",
+  "consent": {
+    "data_source": "user_provided",
+    "share_scope": "review_before_share",
+    "notes": "虚构示例，仅用于说明字段。"
+  },
+  "interactions": [
+    {
+      "date": "2026-06-14",
+      "type": "intro",
+      "summary": "虚构示例：由共同朋友介绍。",
+      "source": "fictional-example"
+    }
+  ],
+  "next_actions": [
+    {
+      "due": "2026-07-01",
+      "action": "确认产品供应能力和服务区域",
+      "status": "open"
+    }
+  ],
   "evidence": [
     {
       "source_type": "user_provided",

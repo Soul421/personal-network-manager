@@ -10,6 +10,29 @@
   "offers": ["社区健康服务渠道"],
   "needs": ["适老化产品供应方"],
   "traits": ["重视长期服务"],
+  "relationship_strength": 2,
+  "last_contacted_at": "2026-06-14",
+  "follow_up_at": "2026-07-14",
+  "consent": {
+    "data_source": "user_provided",
+    "share_scope": "private_only",
+    "notes": "虚构示例，仅用于说明字段。"
+  },
+  "interactions": [
+    {
+      "date": "2026-06-14",
+      "type": "meeting",
+      "summary": "虚构示例：讨论社区健康服务渠道。",
+      "source": "fictional-example"
+    }
+  ],
+  "next_actions": [
+    {
+      "due": "2026-07-14",
+      "action": "确认是否需要适老化产品供应方清单",
+      "status": "open"
+    }
+  ],
   "evidence": [
     {
       "source_type": "user_provided",

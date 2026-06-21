@@ -82,6 +82,10 @@ class NetworkManagerTests(unittest.TestCase):
                 "id": "person-fictional",
                 "name": "林知远",
                 "tier": "candidate",
+                "relationship_strength": 2,
+                "follow_up_at": "2026-07-14",
+                "consent": {"share_scope": "private_only"},
+                "next_actions": [{"due": "2026-07-14", "action": "发资料", "status": "open"}],
                 "offers": ["社区健康渠道"],
                 "needs": ["适老化产品"],
                 "traits": [],
@@ -89,7 +93,32 @@ class NetworkManagerTests(unittest.TestCase):
             }
         )
         self.assertEqual(fields["人物ID"], "person-fictional")
-        self.assertEqual(fields["分层"], "候选线索")
+        self.assertEqual(fields["分层"], "📋 候选线索")
+        self.assertEqual(fields["关系强度"], 2)
+        self.assertEqual(fields["下次跟进"], "2026-07-14")
+        self.assertEqual(fields["分享范围"], "private_only")
+        self.assertIn("发资料", fields["下一步动作"])
+
+    def test_validate_relationship_maintenance_fields(self):
+        errors = network.validate_person(
+            {
+                "id": "person-fictional",
+                "name": "林知远",
+                "tier": "candidate",
+                "relationship_strength": 6,
+                "offers": [],
+                "needs": [],
+                "interactions": {},
+                "next_actions": [{"status": "later"}],
+                "consent": {"share_scope": "public"},
+                "evidence": [{"source_type": "user_provided"}],
+            },
+            Path("person.json"),
+        )
+        self.assertTrue(any("relationship_strength" in item for item in errors))
+        self.assertTrue(any("interactions" in item for item in errors))
+        self.assertTrue(any("next_actions.status" in item for item in errors))
+        self.assertTrue(any("consent.share_scope" in item for item in errors))
 
     def test_feishu_sync_updates_existing_person_id(self):
         previous = {
